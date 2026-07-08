@@ -105,8 +105,10 @@ message Image {
   // present.
   bytes image_data = 3;
 
-  // If present, identifies a shm_open() shared memory object in which the
-  // image data has been written. This should be unchanged between requests.
+  // If present, identifies the shared memory object containing the image data.
+  // On standard Linux, this is the name for a shm_open() object. On Android, this
+  // is the file descriptor for an ashmem region, passed as a string. This should
+  // be unchanged between requests.
   optional string shmem_name = 4;
 
   // The server must reopen `shmem_name` because the client has re-created

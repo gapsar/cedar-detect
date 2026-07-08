@@ -11,10 +11,16 @@ use clap::Parser;
 use env_logger;
 use image::{GrayImage};
 use imageproc::rect::Rect;
-use libc::{c_int, c_void, close, mmap, munmap, shm_open,
-           O_RDONLY, PROT_READ, MAP_FAILED, MAP_SHARED};
-use log::{debug, info, warn};
+// Common libc imports
+use libc::{c_int, c_void, close, mmap, munmap, PROT_READ, MAP_FAILED, MAP_SHARED};
+
+// Platform-specific libc imports
+#[cfg(not(target_os = "android"))]
+use libc::{shm_open, O_RDONLY};
+#[cfg(not(target_os = "android"))]
 use prctl::set_death_signal;
+
+use log::{debug, info, warn};
 
 use ::cedar_detect::algorithm::{estimate_noise_from_image,
                                 estimate_background_from_image_region,
@@ -33,6 +39,30 @@ struct MyCedarDetect {
 }
 
 impl MyCedarDetect {
+    #[cfg(target_os = "android")]
+    fn open(&self, name: &CString) -> Result<c_int, tonic::Status> {
+        let fd_str = match name.to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                let msg = format!("Shared memory name {:?} is not valid UTF-8", name);
+                warn!("{}", msg);
+                return Err(tonic::Status::invalid_argument(msg));
+            }
+        };
+
+        match fd_str.parse::<c_int>() {
+            Ok(fd) => Ok(fd),
+            Err(_) => {
+                let msg = format!(
+                    "Could not parse shared memory file descriptor from name {:?}",
+                    name);
+                warn!("{}", msg);
+                Err(tonic::Status::invalid_argument(msg))
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "android"))]
     fn open(&self, name: &CString) -> Result<c_int, tonic::Status> {
         let open_fd;
         unsafe {
@@ -63,7 +93,9 @@ impl MyCedarDetect {
 impl Drop for MyCedarDetect {
     fn drop(&mut self) {
         let mut fd_ref = self.fd.lock().unwrap();
-        self.close(fd_ref.unwrap());
+        if let Some(fd) = *fd_ref {
+            self.close(fd);
+        }
         *fd_ref = None;
     }
 }
@@ -90,7 +122,9 @@ impl CedarDetect for MyCedarDetect {
         if using_shmem {
             let mut fd_ref = self.fd.lock().unwrap();
             if input_image.reopen_shmem {
-                self.close(fd_ref.unwrap());
+                if let Some(fd) = *fd_ref {
+                    self.close(fd);
+                }
                 *fd_ref = None;
             }
 
@@ -238,7 +272,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         env_logger::Env::default().default_filter_or("info")).init();
     let args = Args::parse();
 
-    // Arrange to die if parent dies.
+    // Arrange to die if parent dies, but only on platforms that support it.
+    #[cfg(not(target_os = "android"))]
     set_death_signal(15).unwrap();
 
     // Listen on any address for the given port.
