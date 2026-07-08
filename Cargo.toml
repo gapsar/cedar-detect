@@ -7,6 +7,10 @@ edition = "2021"
 name = "cedar-detect-server"
 path = "src/bin/cedar_detect_server.rs"
 
+[[bin]]
+name = "cedar-cli"
+path = "src/bin/cedar_cli.rs"
+
 [dependencies]
 approx = "0.5.1"
 clap = { version = "4.3.19", features = ["derive"] }
